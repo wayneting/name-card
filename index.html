@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>業務銷售熱點圖</title>
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- Leaflet Heat -->
+  <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+
+  <style>
+    /* ── Reset & Base ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0d1117; color: #e6edf3; height: 100vh; overflow: hidden; }
+
+    /* ── Map ── */
+    #map { position: absolute; inset: 0; z-index: 0; }
+
+    /* ── Top Bar ── */
+    #topbar {
+      position: absolute; top: 0; left: 0; right: 0; z-index: 1000;
+      height: 52px; background: rgba(13,17,23,0.92); border-bottom: 1px solid #30363d;
+      display: flex; align-items: center; gap: 12px; padding: 0 16px;
+      backdrop-filter: blur(6px);
+    }
+    #topbar .logo {
+      font-size: 15px; font-weight: 700; color: #58a6ff; white-space: nowrap;
+      display: flex; align-items: center; gap-8px;
+    }
+    #topbar .logo span { color: #f0f6fc; margin-left: 6px; font-weight: 400; }
+    #search-box {
+      flex: 1; max-width: 320px; margin-left: auto;
+      background: #161b22; border: 1px solid #30363d; border-radius: 6px;
+      color: #e6edf3; padding: 6px 12px; font-size: 13px; outline: none;
+    }
+    #search-box:focus { border-color: #58a6ff; }
+    #search-box::placeholder { color: #8b949e; }
+
+    /* ── Side Panel ── */
+    #panel {
+      position: absolute; top: 52px; left: 0; bottom: 0; width: 280px;
+      z-index: 999; background: rgba(13,17,23,0.94); border-right: 1px solid #30363d;
+      display: flex; flex-direction: column; overflow: hidden;
+      backdrop-filter: blur(6px);
+      transition: transform 0.3s ease;
+    }
+    #panel.collapsed { transform: translateX(-280px); }
+
+    #panel-toggle {
+      position: absolute; top: 68px; left: 280px; z-index: 1001;
+      width: 22px; height: 48px; background: rgba(13,17,23,0.92);
+      border: 1px solid #30363d; border-left: none; border-radius: 0 6px 6px 0;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      color: #8b949e; font-size: 11px; transition: left 0.3s ease, color 0.2s;
+    }
+    #panel.collapsed + #panel-toggle { left: 0; }
+    #panel-toggle:hover { color: #58a6ff; }
+
+    .panel-section {
+      padding: 14px 16px; border-bottom: 1px solid #21262d;
+    }
+    .panel-section h3 {
+      font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.08em; color: #8b949e; margin-bottom: 10px;
+    }
+
+    /* Layers */
+    .layer-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 5px 0; cursor: pointer; user-select: none;
+    }
+    .layer-row:hover .layer-label { color: #f0f6fc; }
+    .layer-label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #c9d1d9; }
+    .layer-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .layer-toggle {
+      width: 32px; height: 18px; background: #21262d; border-radius: 9px;
+      position: relative; transition: background 0.2s; cursor: pointer;
+    }
+    .layer-toggle.on { background: #1f6feb; }
+    .layer-toggle::after {
+      content: ''; position: absolute; top: 2px; left: 2px;
+      width: 14px; height: 14px; border-radius: 50%; background: #e6edf3;
+      transition: left 0.2s;
+    }
+    .layer-toggle.on::after { left: 16px; }
+
+    /* Bubble Scale */
+    .scale-row { display: flex; align-items: center; gap: 10px; }
+    .scale-row label { font-size: 12px; color: #8b949e; width: 60px; flex-shrink: 0; }
+    input[type=range] {
+      -webkit-appearance: none; flex: 1; height: 4px; border-radius: 2px;
+      background: #30363d; outline: none; cursor: pointer;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 14px; height: 14px;
+      border-radius: 50%; background: #58a6ff; cursor: pointer;
+    }
+    .scale-val { font-size: 12px; color: #58a6ff; width: 28px; text-align: right; flex-shrink: 0; }
+
+    /* Legend */
+    .legend-bar {
+      height: 8px; border-radius: 4px; margin-bottom: 6px;
+      background: linear-gradient(to right, #1a7f37, #d29922, #f85149);
+    }
+    .legend-labels { display: flex; justify-content: space-between; font-size: 11px; color: #8b949e; }
+
+    /* Stats */
+    #stats-list { overflow-y: auto; flex: 1; }
+    .stat-row {
+      display: flex; align-items: center; gap: 10px; padding: 7px 16px;
+      border-bottom: 1px solid #161b22; cursor: pointer; transition: background 0.15s;
+    }
+    .stat-row:hover { background: #161b22; }
+    .stat-rank { font-size: 11px; color: #8b949e; width: 18px; text-align: center; flex-shrink: 0; }
+    .stat-name { flex: 1; font-size: 13px; color: #c9d1d9; }
+    .stat-bar-wrap { width: 60px; height: 4px; background: #21262d; border-radius: 2px; overflow: hidden; }
+    .stat-bar { height: 100%; border-radius: 2px; background: #388bfd; }
+    .stat-val { font-size: 12px; color: #58a6ff; width: 40px; text-align: right; flex-shrink: 0; }
+    .stat-change { font-size: 11px; width: 36px; text-align: right; flex-shrink: 0; }
+    .stat-change.up { color: #3fb950; }
+    .stat-change.down { color: #f85149; }
+
+    /* Bottom Controls */
+    #bottom-controls {
+      position: absolute; bottom: 24px; right: 16px; z-index: 1000;
+      display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
+    }
+    .ctrl-btn {
+      background: rgba(13,17,23,0.92); border: 1px solid #30363d; border-radius: 6px;
+      color: #8b949e; cursor: pointer; font-size: 18px;
+      width: 36px; height: 36px; display: flex; align-items: center; justify-content: center;
+      transition: color 0.2s, border-color 0.2s; backdrop-filter: blur(4px);
+    }
+    .ctrl-btn:hover { color: #f0f6fc; border-color: #58a6ff; }
+
+    /* Summary chips */
+    #summary {
+      position: absolute; bottom: 24px; left: 296px; z-index: 999;
+      display: flex; gap: 8px; transition: left 0.3s ease;
+    }
+    #panel.collapsed ~ #summary { left: 16px; }
+    .chip {
+      background: rgba(13,17,23,0.90); border: 1px solid #30363d;
+      border-radius: 6px; padding: 6px 12px; font-size: 12px; backdrop-filter: blur(4px);
+    }
+    .chip .chip-val { font-size: 16px; font-weight: 700; color: #58a6ff; display: block; }
+    .chip .chip-lbl { color: #8b949e; }
+
+    /* Tooltip override */
+    .leaflet-tooltip {
+      background: #161b22; border: 1px solid #30363d; color: #e6edf3;
+      font-size: 12px; border-radius: 4px; padding: 6px 10px;
+    }
+    .leaflet-tooltip::before { display: none; }
+
+    /* Zoom control override */
+    .leaflet-control-zoom { display: none; }
+  </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<!-- Top Bar -->
+<div id="topbar">
+  <div class="logo">📍<span>業務銷售熱點圖</span></div>
+  <input id="search-box" type="text" placeholder="搜尋城市 / 業務員..." />
+</div>
+
+<!-- Side Panel -->
+<div id="panel">
+
+  <!-- Layers -->
+  <div class="panel-section">
+    <h3>圖層</h3>
+    <div class="layer-row" data-layer="heat">
+      <div class="layer-label">
+        <div class="layer-dot" style="background:radial-gradient(circle,#f85149,#d29922,#1a7f37)"></div>
+        熱力圖
+      </div>
+      <div class="layer-toggle on" id="toggle-heat"></div>
+    </div>
+    <div class="layer-row" data-layer="bubbles">
+      <div class="layer-label">
+        <div class="layer-dot" style="background:#388bfd"></div>
+        熱點氣泡
+      </div>
+      <div class="layer-toggle on" id="toggle-bubbles"></div>
+    </div>
+    <div class="layer-row" data-layer="top">
+      <div class="layer-label">
+        <div class="layer-dot" style="background:#d29922"></div>
+        Top 5 標示
+      </div>
+      <div class="layer-toggle on" id="toggle-top"></div>
+    </div>
+  </div>
+
+  <!-- Scale -->
+  <div class="panel-section">
+    <h3>氣泡縮放</h3>
+    <div class="scale-row">
+      <label>大小</label>
+      <input type="range" id="bubble-scale" min="0.3" max="2" step="0.05" value="0.8" />
+      <span class="scale-val" id="scale-display">0.8x</span>
+    </div>
+    <div class="scale-row" style="margin-top:8px">
+      <label>熱力強度</label>
+      <input type="range" id="heat-radius" min="10" max="80" step="5" value="35" />
+      <span class="scale-val" id="heat-display">35</span>
+    </div>
+  </div>
+
+  <!-- Legend -->
+  <div class="panel-section">
+    <h3>業績說明</h3>
+    <div class="legend-bar"></div>
+    <div class="legend-labels">
+      <span>低</span><span>中</span><span>高</span>
+    </div>
+  </div>
+
+  <!-- Ranking -->
+  <div class="panel-section" style="border-bottom:none; padding-bottom:4px">
+    <h3>地區排行</h3>
+  </div>
+  <div id="stats-list"></div>
+
+</div>
+<div id="panel-toggle">&#9658;</div>
+
+<!-- Summary Chips -->
+<div id="summary">
+  <div class="chip"><span class="chip-val" id="chip-total">0</span><span class="chip-lbl">總業績 (萬)</span></div>
+  <div class="chip"><span class="chip-val" id="chip-leads">0</span><span class="chip-lbl">潛在客戶</span></div>
+  <div class="chip"><span class="chip-val" id="chip-rate">0%</span><span class="chip-lbl">成交率</span></div>
+</div>
+
+<!-- Bottom Controls -->
+<div id="bottom-controls">
+  <button class="ctrl-btn" id="btn-zoom-in" title="放大">+</button>
+  <button class="ctrl-btn" id="btn-zoom-out" title="縮小">−</button>
+  <button class="ctrl-btn" id="btn-fit" title="全覽">⊡</button>
+</div>
+
+<script>
+// ── Map Init ──────────────────────────────────────────────────────────────────
+const map = L.map('map', { zoomControl: false, attributionControl: false })
+  .setView([23.87, 120.96], 7.5);
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  maxZoom: 18
+}).addTo(map);
+
+// ── Sales Data (mock) ─────────────────────────────────────────────────────────
+// [lat, lng, name, sales(萬), leads, growth, rep]
+const salesData = [
+  [25.0478, 121.5319, '台北市',  8420, 312, +12.3, '王大明'],
+  [25.0169, 121.4627, '新北市',  6750, 281, +8.7,  '陳小芳'],
+  [25.0047, 121.3000, '桃園市',  5230, 243, +15.2, '林志遠'],
+  [24.8138, 120.9675, '新竹市',  4180, 196, +22.4, '張怡君'],
+  [24.8066, 120.9686, '新竹縣',  2960, 152, +5.8,  '黃俊傑'],
+  [24.5702, 120.8214, '苗栗縣',  1740, 98,  -2.1,  '吳美玲'],
+  [24.1477, 120.6736, '台中市',  7610, 305, +18.9, '劉家豪'],
+  [24.0751, 120.5426, '彰化縣',  2890, 134, +3.4,  '蔡淑華'],
+  [23.9600, 120.5730, '南投縣',  1520, 87,  -4.5,  '許建國'],
+  [23.7092, 120.4313, '雲林縣',  1860, 105, +6.2,  '鄭雅婷'],
+  [23.4801, 120.4491, '嘉義市',  2310, 118, +9.1,  '賴文山'],
+  [23.4518, 120.2555, '嘉義縣',  1650, 92,  +1.8,  '簡雅惠'],
+  [22.9999, 120.2270, '台南市',  5840, 252, +11.6, '謝志明'],
+  [22.6273, 120.3014, '高雄市',  7020, 298, +14.3, '洪秀珍'],
+  [22.6716, 120.4872, '屏東縣',  2140, 121, -1.3,  '柯明輝'],
+  [23.9871, 121.6015, '花蓮縣',  1380, 74,  +7.5,  '邱美蘭'],
+  [22.7583, 121.1445, '台東縣',  980,  58,  -3.2,  '廖建志'],
+  [24.7021, 121.7377, '宜蘭縣',  1920, 108, +10.4, '沈嘉琪'],
+  [25.1276, 121.7396, '基隆市',  2560, 132, +6.9,  '徐麗珠'],
+  [24.9912, 121.3020, '桃園區',  3410, 168, +13.7, '范俊宏'],
+];
+
+const maxSales = Math.max(...salesData.map(d => d[3]));
+
+// ── Colour helpers ────────────────────────────────────────────────────────────
+function salesColor(val) {
+  const t = val / maxSales;
+  if (t > 0.7) return '#f85149';
+  if (t > 0.4) return '#d29922';
+  return '#3fb950';
+}
+function bubbleRadius(val, scale) {
+  return Math.sqrt(val / maxSales) * 52 * scale;
+}
+
+// ── Layers ────────────────────────────────────────────────────────────────────
+let bubbleScale = 0.8;
+let heatRadiusVal = 35;
+
+// Heatmap
+const heatPoints = salesData.map(d => [d[0], d[1], d[3] / maxSales]);
+let heatLayer = L.heatLayer(heatPoints, {
+  radius: heatRadiusVal, blur: 22, maxZoom: 10,
+  gradient: { 0.2: '#1a7f37', 0.5: '#d29922', 0.8: '#f85149' }
+}).addTo(map);
+
+// Bubble group
+const bubbleGroup = L.layerGroup().addTo(map);
+const topGroup    = L.layerGroup().addTo(map);
+
+function drawBubbles() {
+  bubbleGroup.clearLayers();
+  const sorted = [...salesData].sort((a, b) => b[3] - a[3]);
+
+  sorted.forEach((d, i) => {
+    const r = bubbleRadius(d[3], bubbleScale);
+    const col = salesColor(d[3]);
+    const circle = L.circleMarker([d[0], d[1]], {
+      radius: r, color: col, weight: 1.5,
+      fillColor: col, fillOpacity: 0.22, opacity: 0.6
+    }).bindTooltip(
+      `<b>${d[2]}</b><br>業績：<b style="color:${col}">${d[3].toLocaleString()} 萬</b><br>`+
+      `潛在客戶：${d[4]} 筆<br>業務：${d[6]}<br>`+
+      `月增率：<span style="color:${d[5]>=0?'#3fb950':'#f85149'}">${d[5]>=0?'+':''}${d[5]}%</span>`,
+      { direction: 'top', offset: [0, -4], sticky: false }
+    ).on('click', () => highlightStat(i));
+    bubbleGroup.addLayer(circle);
+  });
+}
+
+function drawTopLabels() {
+  topGroup.clearLayers();
+  const top5 = [...salesData].sort((a, b) => b[3] - a[3]).slice(0, 5);
+  top5.forEach((d, i) => {
+    const icon = L.divIcon({
+      className: '',
+      html: `<div style="background:#d29922;color:#0d1117;font-size:10px;font-weight:700;
+                    padding:2px 6px;border-radius:3px;white-space:nowrap;line-height:1.4">
+               #${i+1} ${d[2]}</div>`,
+      iconAnchor: [0, 0]
+    });
+    topGroup.addLayer(L.marker([d[0]+0.08, d[1]+0.06], { icon }));
+  });
+}
+
+drawBubbles();
+drawTopLabels();
+
+// ── Stats List ────────────────────────────────────────────────────────────────
+const sorted = [...salesData].sort((a, b) => b[3] - a[3]);
+const statsList = document.getElementById('stats-list');
+
+function buildStats() {
+  statsList.innerHTML = '';
+  sorted.forEach((d, i) => {
+    const pct = ((d[3] / maxSales) * 100).toFixed(0);
+    const changeClass = d[5] >= 0 ? 'up' : 'down';
+    const changeStr   = (d[5] >= 0 ? '+' : '') + d[5] + '%';
+    const row = document.createElement('div');
+    row.className = 'stat-row';
+    row.dataset.idx = i;
+    row.innerHTML = `
+      <div class="stat-rank">${i+1}</div>
+      <div class="stat-name">${d[2]}</div>
+      <div class="stat-bar-wrap"><div class="stat-bar" style="width:${pct}%;background:${salesColor(d[3])}"></div></div>
+      <div class="stat-val">${d[3].toLocaleString()}</div>
+      <div class="stat-change ${changeClass}">${changeStr}</div>`;
+    row.addEventListener('click', () => {
+      map.flyTo([d[0], d[1]], 11, { duration: 1 });
+    });
+    statsList.appendChild(row);
+  });
+}
+
+function highlightStat(idx) {
+  document.querySelectorAll('.stat-row').forEach(r => r.style.background = '');
+  const row = statsList.querySelector(`[data-idx="${idx}"]`);
+  if (row) { row.style.background = '#1c2128'; row.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+}
+
+buildStats();
+
+// ── Summary Chips ─────────────────────────────────────────────────────────────
+const totalSales = salesData.reduce((s, d) => s + d[3], 0);
+const totalLeads = salesData.reduce((s, d) => s + d[4], 0);
+const avgGrowth  = (salesData.reduce((s, d) => s + d[5], 0) / salesData.length).toFixed(1);
+document.getElementById('chip-total').textContent = totalSales.toLocaleString();
+document.getElementById('chip-leads').textContent = totalLeads.toLocaleString();
+document.getElementById('chip-rate').textContent  = (avgGrowth > 0 ? '+' : '') + avgGrowth + '%';
+
+// ── Controls ──────────────────────────────────────────────────────────────────
+// Panel toggle
+const panel = document.getElementById('panel');
+const toggle = document.getElementById('panel-toggle');
+toggle.addEventListener('click', () => {
+  panel.classList.toggle('collapsed');
+  toggle.innerHTML = panel.classList.contains('collapsed') ? '&#9658;' : '&#9664;';
+});
+
+// Layer toggles
+const layers = {
+  heat:    { layer: heatLayer,    toggle: document.getElementById('toggle-heat'),    on: true },
+  bubbles: { layer: bubbleGroup,  toggle: document.getElementById('toggle-bubbles'), on: true },
+  top:     { layer: topGroup,     toggle: document.getElementById('toggle-top'),     on: true },
+};
+document.querySelectorAll('[data-layer]').forEach(row => {
+  row.addEventListener('click', () => {
+    const key = row.dataset.layer;
+    const state = layers[key];
+    state.on = !state.on;
+    state.toggle.classList.toggle('on', state.on);
+    if (state.on) map.addLayer(state.layer); else map.removeLayer(state.layer);
+  });
+});
+
+// Bubble scale
+document.getElementById('bubble-scale').addEventListener('input', function() {
+  bubbleScale = parseFloat(this.value);
+  document.getElementById('scale-display').textContent = bubbleScale.toFixed(2) + 'x';
+  drawBubbles();
+});
+
+// Heat radius
+document.getElementById('heat-radius').addEventListener('input', function() {
+  heatRadiusVal = parseInt(this.value);
+  document.getElementById('heat-display').textContent = heatRadiusVal;
+  map.removeLayer(heatLayer);
+  heatLayer = L.heatLayer(heatPoints, {
+    radius: heatRadiusVal, blur: 22, maxZoom: 10,
+    gradient: { 0.2: '#1a7f37', 0.5: '#d29922', 0.8: '#f85149' }
+  });
+  if (layers.heat.on) map.addLayer(heatLayer);
+  layers.heat.layer = heatLayer;
+});
+
+// Zoom buttons
+document.getElementById('btn-zoom-in').addEventListener('click',  () => map.zoomIn());
+document.getElementById('btn-zoom-out').addEventListener('click', () => map.zoomOut());
+document.getElementById('btn-fit').addEventListener('click',      () => map.flyTo([23.87, 120.96], 7.5, { duration: 1 }));
+
+// Search
+document.getElementById('search-box').addEventListener('input', function() {
+  const q = this.value.trim().toLowerCase();
+  if (!q) { buildStats(); return; }
+  const filtered = salesData.filter(d =>
+    d[2].includes(q) || d[6].toLowerCase().includes(q)
+  );
+  if (filtered.length === 1) map.flyTo([filtered[0][0], filtered[0][1]], 12, { duration: 1 });
+  // highlight matching stats rows
+  document.querySelectorAll('.stat-row').forEach(row => {
+    const name = row.querySelector('.stat-name').textContent;
+    row.style.background = name.includes(q) ? '#1c2128' : '';
+  });
+});
+</script>
+</body>
+</html>
